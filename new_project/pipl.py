@@ -5,6 +5,8 @@ from sqlalchemy import create_engine, text, select
 from sqlalchemy import MetaData, Table, String, Integer, Column, Text, DateTime, Boolean
 from sqlalchemy.engine import URL
 
+from urllib.parse import urlparse
+
 import pandas as pd
 
 
@@ -20,6 +22,7 @@ class Pipeline:
     def run(input, output):
         LoadToDB.run(input, output)
         CreateTableAs.run(output)
+        CopyToFile.run(output)
     
 class BaseTask:
     @staticmethod
@@ -48,31 +51,23 @@ class LoadToDB(BaseTask):
 
 
 class CreateTableAs(BaseTask):
-    class Question(Base):
-        __tablename__ = "questions"
-        id=Column(...)
-        user_id=Column(...)
     
+    @staticmethod
+    def run(input):
+        con = BaseTask.create_connection()
+        query = text(f"""SELECT * FROM {input}""")
+        with con.begin() as conn:
+            df = pd.read_sql_query(query, conn)
+            df['domain'] = df['url'].apply(lambda x: urlparse(x).netloc)
+            df.to_sql(con=conn, name='norm', if_exists='replace')
+                
+class CopyToFile(BaseTask):      
     @staticmethod
     def run(output):
         con = BaseTask.create_connection()
-        with con.connect() as connection:
-            metadata = MetaData()
-
-            Norm = Table('norm', metadata, 
-                Column('index', Integer(), primary_key=True),
-                Column('post_title', Integer(), nullable=False),
-                Column('name', Text(),  nullable=False),
-                Column('url', Text(), nullable=False)
-            )
-            metadata.create_all(con)
-            
-            sql = text('''
-                    insert into norm (id, name, url)
-                    select *, domain_of_url(url)
-                    from :out 
-                    ''')
-            result = connection.execute(sql, {"out" : output})
+        with con.begin() as conn:
+            query = text("""SELECT * FROM norm""")
+            pd.read_sql_query(query, conn).to_csv(output, sep=',')
         
         
 
